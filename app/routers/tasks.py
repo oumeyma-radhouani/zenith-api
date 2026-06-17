@@ -1,13 +1,15 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 from ..database import supabase
+from datetime import date # <-- NEW: We need this to get today's date!
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
-# --- THE NEW SECURITY CHECKPOINT ---
+# --- THE SECURITY CHECKPOINT ---
 class TaskCreate(BaseModel):
     title: str
-    difficulty: str = "minion" # It now expects a word!
+    difficulty: str = "minion"
+    is_daily: bool = False # <-- NEW: Expect the checkbox!
 
 # --- 1. PLAYER STATS ROUTE ---
 @router.get("/player")
@@ -15,29 +17,38 @@ def get_player_stats():
     response = supabase.table("player_stats").select("*").eq("id", 1).execute()
     return response.data[0]
 
-# --- 2. READ ALL QUESTS ---
+# --- 2. READ ALL QUESTS (THE MIDNIGHT FILTER) ---
 @router.get("/")
 def read_tasks():
     response = supabase.table("tasks").select("*").execute()
-    return response.data
+    
+    # Get today's date as a string (e.g., '2026-06-17')
+    today = str(date.today())
+    
+    active_tasks = []
+    for task in response.data:
+        # If it's a daily task AND it was already completed today, hide it!
+        if task.get("is_daily") and task.get("last_completed") == today:
+            continue 
+            
+        active_tasks.append(task)
+        
+    return active_tasks
 
-# --- 3. CREATE A NEW QUEST (THE MULTIPLIER ENGINE) ---
+# --- 3. CREATE A NEW QUEST ---
 @router.post("/")
 def create_task(task: TaskCreate):
-    # The XP Dictionary
     xp_map = {
-        "minion": 10,   # Quick chore
-        "elite": 30,    # Solid homework session
-        "boss": 100     # Major exam/project
+        "minion": 10,
+        "elite": 30,
+        "boss": 100
     }
-    
-    # Safely get the XP based on the word sent. Defaults to 10 if it gets confused.
     calculated_xp = xp_map.get(task.difficulty.lower(), 10)
 
-    # Insert the calculated number into the vault
     response = supabase.table("tasks").insert([{
         "title": task.title, 
-        "xp_reward": calculated_xp
+        "xp_reward": calculated_xp,
+        "is_daily": task.is_daily # <-- Save the habit status!
     }]).execute()
     
     return response.data[0]
@@ -45,29 +56,36 @@ def create_task(task: TaskCreate):
 # --- 4. COMPLETE QUEST & LEVEL UP ENGINE ---
 @router.delete("/{task_id}")
 def complete_task(task_id: str):
-    # Step A: Find out how much XP the quest is worth
-    task_response = supabase.table("tasks").select("xp_reward").eq("id", task_id).execute()
+    task_response = supabase.table("tasks").select("*").eq("id", task_id).execute()
     if not task_response.data:
         return {"error": "Quest not found"}
     
-    # FIX: Force the reward into an integer!
-    reward = int(task_response.data[0]["xp_reward"])
-    
-    # Step B: Delete the quest
-    supabase.table("tasks").delete().eq("id", task_id).execute()
+    task_data = task_response.data[0]
+    reward = int(task_data["xp_reward"])
+    is_daily = task_data.get("is_daily", False)
+    last_completed = task_data.get("last_completed")
+    today = str(date.today())
 
-    # Step C: Get your current player stats
-    player_response = supabase.table("player_stats").select("*").eq("id", 1).execute()
+    # --- ANTI-SPAM SHIELD ---
+    if is_daily and last_completed == today:
+        return {"message": "Already completed today!"}
     
-    # FIX: Force the database stats into integers!
+    # --- DELETE OR UPDATE ---
+    if is_daily:
+        # It's a habit! Stamp it with today's date to hide it.
+        supabase.table("tasks").update({"last_completed": today}).eq("id", task_id).execute()
+    else:
+        # It's a normal quest! Vaporize it.
+        supabase.table("tasks").delete().eq("id", task_id).execute()
+
+    # Get stats and do RPG Math
+    player_response = supabase.table("player_stats").select("*").eq("id", 1).execute()
     current_xp = int(player_response.data[0]["xp"])
     current_level = int(player_response.data[0]["level"])
 
-    # Step D: The RPG Math
     new_xp = current_xp + reward
     new_level = (new_xp // 100) + 1 
 
-    # Step E: Save the new stats back to the vault
     supabase.table("player_stats").update({
         "xp": new_xp,
         "level": new_level
