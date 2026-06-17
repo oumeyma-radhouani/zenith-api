@@ -4,14 +4,14 @@ from ..database import supabase
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
+# --- THE NEW SECURITY CHECKPOINT ---
 class TaskCreate(BaseModel):
     title: str
-    xp_reward: int = 10
+    difficulty: str = "minion" # It now expects a word!
 
 # --- 1. PLAYER STATS ROUTE ---
 @router.get("/player")
 def get_player_stats():
-    # Fetch your master player row (ID 1)
     response = supabase.table("player_stats").select("*").eq("id", 1).execute()
     return response.data[0]
 
@@ -21,19 +21,31 @@ def read_tasks():
     response = supabase.table("tasks").select("*").execute()
     return response.data
 
-# --- 3. CREATE A NEW QUEST ---
+# --- 3. CREATE A NEW QUEST (THE MULTIPLIER ENGINE) ---
 @router.post("/")
 def create_task(task: TaskCreate):
+    # The XP Dictionary
+    xp_map = {
+        "minion": 10,   # Quick chore
+        "elite": 30,    # Solid homework session
+        "boss": 100     # Major exam/project
+    }
+    
+    # Safely get the XP based on the word sent. Defaults to 10 if it gets confused.
+    calculated_xp = xp_map.get(task.difficulty.lower(), 10)
+
+    # Insert the calculated number into the vault
     response = supabase.table("tasks").insert([{
         "title": task.title, 
-        "xp_reward": task.xp_reward
+        "xp_reward": calculated_xp
     }]).execute()
+    
     return response.data[0]
 
 # --- 4. COMPLETE QUEST & LEVEL UP ENGINE ---
 @router.delete("/{task_id}")
 def complete_task(task_id: str):
-        # Step A: Find out how much XP the quest is worth
+    # Step A: Find out how much XP the quest is worth
     task_response = supabase.table("tasks").select("xp_reward").eq("id", task_id).execute()
     if not task_response.data:
         return {"error": "Quest not found"}
