@@ -1,7 +1,8 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 from ..database import supabase
-from datetime import date # <-- NEW: We need this to get today's date!
+from datetime import date
+from typing import Optional # <-- NEW: Allows optional fields!
 
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
@@ -9,7 +10,8 @@ router = APIRouter(prefix="/tasks", tags=["Tasks"])
 class TaskCreate(BaseModel):
     title: str
     difficulty: str = "minion"
-    is_daily: bool = False # <-- NEW: Expect the checkbox!
+    is_daily: bool = False
+    due_date: Optional[str] = None # <-- NEW: The optional deadline!
 
 # --- 1. PLAYER STATS ROUTE ---
 @router.get("/player")
@@ -21,16 +23,12 @@ def get_player_stats():
 @router.get("/")
 def read_tasks():
     response = supabase.table("tasks").select("*").execute()
-    
-    # Get today's date as a string (e.g., '2026-06-17')
     today = str(date.today())
     
     active_tasks = []
     for task in response.data:
-        # If it's a daily task AND it was already completed today, hide it!
         if task.get("is_daily") and task.get("last_completed") == today:
             continue 
-            
         active_tasks.append(task)
         
     return active_tasks
@@ -38,17 +36,15 @@ def read_tasks():
 # --- 3. CREATE A NEW QUEST ---
 @router.post("/")
 def create_task(task: TaskCreate):
-    xp_map = {
-        "minion": 10,
-        "elite": 30,
-        "boss": 100
-    }
+    xp_map = {"minion": 10, "elite": 30, "boss": 100}
     calculated_xp = xp_map.get(task.difficulty.lower(), 10)
 
+    # Insert the new date into the vault!
     response = supabase.table("tasks").insert([{
         "title": task.title, 
         "xp_reward": calculated_xp,
-        "is_daily": task.is_daily # <-- Save the habit status!
+        "is_daily": task.is_daily,
+        "due_date": task.due_date
     }]).execute()
     
     return response.data[0]
@@ -66,19 +62,14 @@ def complete_task(task_id: str):
     last_completed = task_data.get("last_completed")
     today = str(date.today())
 
-    # --- ANTI-SPAM SHIELD ---
     if is_daily and last_completed == today:
         return {"message": "Already completed today!"}
     
-    # --- DELETE OR UPDATE ---
     if is_daily:
-        # It's a habit! Stamp it with today's date to hide it.
         supabase.table("tasks").update({"last_completed": today}).eq("id", task_id).execute()
     else:
-        # It's a normal quest! Vaporize it.
         supabase.table("tasks").delete().eq("id", task_id).execute()
 
-    # Get stats and do RPG Math
     player_response = supabase.table("player_stats").select("*").eq("id", 1).execute()
     current_xp = int(player_response.data[0]["xp"])
     current_level = int(player_response.data[0]["level"])
