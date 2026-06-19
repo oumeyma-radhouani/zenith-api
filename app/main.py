@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import tasks, notes
+from app.routers import tasks, notes , finances
 
 app = FastAPI(title="Zenith API")
 
@@ -16,6 +16,7 @@ app.add_middleware(
 # Connect the specific routers
 app.include_router(tasks.router)
 app.include_router(notes.router)
+app.include_router(finances.router)
 
 @app.get("/")
 def read_root():
